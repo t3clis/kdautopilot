@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace kdacli
+namespace DevelopingInsanity.KDM.kdacli
 {
     class Program
     {
