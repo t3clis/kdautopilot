@@ -1,5 +1,6 @@
 ﻿using Microsoft.Azure.Cosmos.Table;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -13,7 +14,8 @@ namespace DevelopingInsanity.KDM.kdacli
         List,
         Add,
         Delete,
-        Find
+        Find,
+        RebuildIndexes
     }
 
     internal class ProgramParameters
@@ -51,7 +53,7 @@ namespace DevelopingInsanity.KDM.kdacli
         static ProgramParameters ParseParameters(string[] args, out bool verbose)
         {
             ProgramParameters result = new ProgramParameters();
-            bool expectType = false;
+            bool expectType = false, expectName = false;
             verbose = false;
 
             foreach (string arg in args)
@@ -83,12 +85,40 @@ namespace DevelopingInsanity.KDM.kdacli
                         break;
                     case "-l":
                         {
-                            if (expectType)
-                                result.Operation = OperationRequested.Invalid;
-                            else if (result.Operation != OperationRequested.Unknown)
+                            if (result.Operation != OperationRequested.Unknown)
                                 result.Operation = OperationRequested.Invalid;
                             else
                                 result.Operation = OperationRequested.List;
+                        }
+                        break;
+                    case "-del":
+                        {
+                            if (result.Operation != OperationRequested.Unknown)
+                                result.Operation = OperationRequested.Invalid;
+                            else
+                            {
+                                result.Operation = OperationRequested.Delete;
+                                expectName = true;
+                            }
+                        }
+                        break;
+                    case "-find":
+                        {
+                            if (result.Operation != OperationRequested.Unknown)
+                                result.Operation = OperationRequested.Invalid;
+                            else
+                            {
+                                result.Operation = OperationRequested.Find;
+                                expectName = true;
+                            }
+                        }
+                        break;
+                    case "--rebuild-indexes":
+                        {
+                            if (result.Operation != OperationRequested.Unknown)
+                                result.Operation = OperationRequested.Invalid;
+                            else
+                                result.Operation = OperationRequested.RebuildIndexes;
                         }
                         break;
                     default:
@@ -104,6 +134,11 @@ namespace DevelopingInsanity.KDM.kdacli
                                 result.Operation = OperationRequested.Invalid;
                                 expectType = false;
                             }
+                        }
+                        else if (expectName)
+                        {
+                            result.CardName = arg;
+                            expectName = false;
                         }
                         else
                             result.Operation = OperationRequested.Invalid;
@@ -132,6 +167,20 @@ namespace DevelopingInsanity.KDM.kdacli
             return input;
         }
 
+        static string ReadOption(string prompt, params string[] options)
+        {
+            bool inputValid = false;
+            string input = string.Empty;
+
+            while (!inputValid)
+            {
+                input = ReadNotEmptyLine(prompt);
+                inputValid = options.Contains(input);
+            }
+
+            return input;
+        }
+
         static int ReadInt(string prompt, int? defaultValue)
         {
             bool inputValid = false;
@@ -152,19 +201,26 @@ namespace DevelopingInsanity.KDM.kdacli
             return value;
         }
 
+        static void AddContinuation()
+        {
+            Console.Write("Press ENTER to continue...");
+            Console.CursorVisible = false;
+            Console.ReadLine();
+            Console.CursorVisible = true;
+        }
+
         static void Main(string[] args)
         {
             string cardsTableName = "MonsterCards", indexTableName = "IndexByMonsterNames";
-            bool verbose = false;
             AppSettings settings = null;
             CloudStorageAccount account = null;
             CloudTable cardsTable = null, indexTable = null;
-            ProgramParameters parameters = ParseParameters(args, out verbose);
+            ProgramParameters parameters = ParseParameters(args, out bool verbose);
 
 
             if (parameters.Operation == OperationRequested.Invalid)
             {
-                Console.WriteLine("Usage:\n\tkdacli (-add {type} | -del {card_name} | -l | -find {card_name|card_type})[-v | --verbose]");
+                Console.WriteLine("Usage:\n\tkdacli (-add {type} | -del \"card name\" | -l | -find {\"card name\"|cardType} | --rebuild-indexes)[-v | --verbose]");
                 Environment.Exit(-1);
             }
 
@@ -207,13 +263,139 @@ namespace DevelopingInsanity.KDM.kdacli
                     break;
                 case OperationRequested.List:
                     {
-                        ExecuteList(parameters, cardsTable, indexTable);
+                        ExecuteList(cardsTable, indexTable);
+                    }
+                    break;
+                case OperationRequested.Find:
+                    {
+                        ExecuteFind(parameters, cardsTable);
+                    }
+                    break;
+                case OperationRequested.Delete:
+                    {
+                        ExecuteDelete(parameters, cardsTable, indexTable);
+                    }
+                    break;
+                case OperationRequested.RebuildIndexes:
+                    {
+                        ExecuteRebuildIndexes(cardsTable, indexTable);
                     }
                     break;
             }
         }
 
-        private static void ExecuteList(ProgramParameters parameters, CloudTable cardsTable, CloudTable indexTable)
+        private static void ExecuteRebuildIndexes(CloudTable cardsTable, CloudTable indexTable)
+        {
+            TableUtils<IndexByMonsterEntity> indexUtils = new TableUtils<IndexByMonsterEntity>(indexTable);
+            int count = 0;
+            List<IndexByMonsterEntity> rebuiltEntries = new List<IndexByMonsterEntity>();
+
+            Console.WriteLine("Rebuild indexes");
+
+            Console.Write("Index by Monster: retrieving current index...");
+            var indexEntities = indexTable.ExecuteQuery(new TableQuery<IndexByMonsterEntity>()).ToList();
+            Console.WriteLine("done");
+
+            Console.WriteLine("Index by Monster: rebuilding properties");
+            var cardEntities = cardsTable.ExecuteQuery(new TableQuery<MonsterCardEntity>()).ToList();
+
+            foreach (MonsterCardEntity entity in cardEntities)
+            {
+                if (entity.PartitionKey != CardType.BasicResource.ToString()
+                    && entity.PartitionKey != CardType.StrangeResource.ToString())
+                {
+                    foreach (IndexByMonsterEntity indexEntry in indexEntities)
+                    {
+                        if (entity.RowKey.Equals(indexEntry.RowKey) && !indexEntry.CardType.Equals(entity.PartitionKey))
+                        {
+                            indexEntry.CardType = entity.PartitionKey;
+                            rebuiltEntries.Add(indexEntry);
+                            Console.WriteLine($"Entry '{indexEntry}' updated");
+                            count++;
+                        }
+                    }
+                }
+            }
+
+            if (count > 0)
+            {
+                Console.Write("Index by monster: uploading rebuilt index...");
+                indexUtils.BatchInsertOrMergeEntityAsync(indexEntities, true).GetAwaiter().GetResult();
+                Console.WriteLine($"done\n{indexEntities.Count} entr{(indexEntities.Count == 1 ? "y" : "ies")} found\n{count} entr{(count == 1 ? "y" : "ies")} rebuilt");
+            }
+            else
+            {
+                Console.WriteLine("Index by Monster: no entries to update found.");
+            }
+        }
+
+        private static void ExecuteDelete(ProgramParameters parameters, CloudTable cardsTable, CloudTable indexTable)
+        {
+            TableUtils<MonsterCardEntity> cardUtils = new TableUtils<MonsterCardEntity>(cardsTable);
+            TableUtils<IndexByMonsterEntity> indexUtils = new TableUtils<IndexByMonsterEntity>(indexTable);
+
+            Console.Write("Retrieving entities to be deleted...");
+            var cards = cardsTable.ExecuteQuery<MonsterCardEntity>(new TableQuery<MonsterCardEntity>()).Where(e =>
+            { return e.RowKey.StartsWith(parameters.CardName); }).ToList();
+            Console.WriteLine($"done\n{cards.Count} entries found.");
+
+            foreach (MonsterCardEntity card in cards)
+            {
+                string option;
+                Console.WriteLine($"**************\n{card}\n**************\nIf you confirm deletion, this card and all its index entries will be deleted.");
+                option = ReadOption("Are you sure (y/n)? ", "Y", "y", "yes", "Yes", "N", "n", "No", "no");
+                switch (option)
+                {
+                    case "y":
+                    case "Y":
+                    case "yes":
+                    case "Yes":
+                        {
+                            Console.Write("Searching related index entries...");
+                            var indexEntries = indexTable.ExecuteQuery(new TableQuery<IndexByMonsterEntity>()).Where((e) => { return e.RowKey.Equals(card.RowKey); }).ToList();
+                            Console.WriteLine($"done\n{indexEntries.Count} entr{(indexEntries.Count == 1 ? "y" : "ies")} found.");
+                            Console.Write("Deleting card entry...");
+                            cardUtils.DeleteEntityAsync(card).GetAwaiter().GetResult();
+                            Console.WriteLine("done");
+
+                            Console.Write("Deleting index entries...");
+                            foreach (IndexByMonsterEntity indexEntry in indexEntries)
+                            {
+                                indexUtils.DeleteEntityAsync(indexEntry).GetAwaiter().GetResult();
+                            }
+                            Console.WriteLine("done");
+                        }
+                        break;
+                    default:
+                        {
+                            Console.Write("Skipping this entry. ");
+                        }
+                        break;
+                }
+
+                AddContinuation();
+            }
+        }
+
+        private static void ExecuteFind(ProgramParameters parameters, CloudTable cardsTable)
+        {
+            Console.Write("Querying cards table...");
+            var entities = cardsTable.ExecuteQuery(new TableQuery<MonsterCardEntity>()).Where((item) =>
+                                                {
+                                                    return
+                                                      item.PartitionKey.Contains(parameters.CardName, StringComparison.InvariantCultureIgnoreCase)
+                                                    || item.RowKey.Contains(parameters.CardName, StringComparison.InvariantCultureIgnoreCase);
+                                                }).ToList();
+            Console.WriteLine($"done\n{entities.Count} entr{(entities.Count != 1 ? "ies" : "y")} found.\n\n*******************");
+
+            foreach (MonsterCardEntity entity in entities)
+            {
+                Console.WriteLine($"{entity}\n*******************");
+                AddContinuation();
+            }
+        }
+
+        private static void ExecuteList(CloudTable cardsTable, CloudTable indexTable)
         {
             int count;
 
@@ -234,6 +416,8 @@ namespace DevelopingInsanity.KDM.kdacli
 
             Console.WriteLine("*******************");
 
+            AddContinuation();
+
             Console.WriteLine("Card entries:\n*******************");
 
             count = 0;
@@ -244,8 +428,7 @@ namespace DevelopingInsanity.KDM.kdacli
                 Console.WriteLine($"{card}\n*******************");
                 if (count % 3 == 0)
                 {
-                    Console.Write("Press ENTER to continue...");
-                    Console.ReadLine();
+                    AddContinuation();
                 }
             }
         }
@@ -268,6 +451,25 @@ namespace DevelopingInsanity.KDM.kdacli
             else
             {
                 monsterCard.RowKey = "Basic Action";
+            }
+
+            MonsterCardEntity existingCard = cardUtils.RetrieveEntityUsingPointQueryAsync(monsterCard.PartitionKey, monsterCard.RowKey).GetAwaiter().GetResult();
+
+            if (existingCard != null)
+            {
+                Console.WriteLine($"Entry '{monsterCard.PartitionKey} {monsterCard.RowKey}' already exists in database. If you continue, existing entry will be REPLACED.");
+                string option = ReadOption("Continue (yes/no)? ", "Y", "y", "yes", "Yes", "N", "n", "No", "no");
+                switch (option)
+                {
+                    case "N":
+                    case "n":
+                    case "no":
+                    case "No":
+                        {
+                            Console.WriteLine("Aborted by user.");
+                            return;
+                        }
+                }
             }
 
             indexCard.RowKey = monsterCard.RowKey;
