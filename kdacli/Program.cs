@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 
 namespace DevelopingInsanity.KDM.kdacli
 {
+    
     internal enum OperationRequested
     {
         Unknown,
@@ -15,7 +16,9 @@ namespace DevelopingInsanity.KDM.kdacli
         Add,
         Delete,
         Find,
-        RebuildIndexes
+        RebuildIndexes,
+        DumpTables,
+        RebuildTables
     }
 
     internal class ProgramParameters
@@ -23,6 +26,7 @@ namespace DevelopingInsanity.KDM.kdacli
         public OperationRequested Operation { get; set; }
         public CardType CardType { get; set; }
         public string CardName { get; set; }
+        public string DataFile { get; set; }
 
         public ProgramParameters()
         : this(OperationRequested.Unknown)
@@ -38,6 +42,7 @@ namespace DevelopingInsanity.KDM.kdacli
 
     class Program
     {
+        private const string cardsTableName = "MonsterCards", indexTableName = "IndexByMonsterNames", monsterTableName = "Monsters";
         static void Out(string text, bool verbose)
         {
             if (verbose)
@@ -53,7 +58,7 @@ namespace DevelopingInsanity.KDM.kdacli
         static ProgramParameters ParseParameters(string[] args, out bool verbose)
         {
             ProgramParameters result = new ProgramParameters();
-            bool expectType = false, expectName = false;
+            bool expectType = false, expectName = false, expectFile = false;
             verbose = false;
 
             foreach (string arg in args)
@@ -121,6 +126,28 @@ namespace DevelopingInsanity.KDM.kdacli
                                 result.Operation = OperationRequested.RebuildIndexes;
                         }
                         break;
+                    case "--dump":
+                        {
+                            if (result.Operation != OperationRequested.Unknown)
+                                result.Operation = OperationRequested.Invalid;
+                            else
+                            {
+                                result.Operation = OperationRequested.DumpTables;
+                                expectFile = true;
+                            }
+                        }
+                        break;
+                    case "--upload":
+                        {
+                            if (result.Operation != OperationRequested.Unknown)
+                                result.Operation = OperationRequested.Invalid;
+                            else
+                            {
+                                result.Operation = OperationRequested.RebuildTables;
+                                expectFile = true;
+                            }
+                        }
+                        break;
                     default:
                         if (expectType)
                         {
@@ -139,6 +166,11 @@ namespace DevelopingInsanity.KDM.kdacli
                         {
                             result.CardName = arg;
                             expectName = false;
+                        }
+                        else if (expectFile)
+                        {
+                            result.DataFile = arg;
+                            expectFile = false;
                         }
                         else
                             result.Operation = OperationRequested.Invalid;
@@ -211,16 +243,16 @@ namespace DevelopingInsanity.KDM.kdacli
 
         static void Main(string[] args)
         {
-            string cardsTableName = "MonsterCards", indexTableName = "IndexByMonsterNames";
+            
             AppSettings settings = null;
             CloudStorageAccount account = null;
-            CloudTable cardsTable = null, indexTable = null;
+            CloudTable cardsTable = null, indexTable = null, monsterTable = null;
             ProgramParameters parameters = ParseParameters(args, out bool verbose);
 
 
             if (parameters.Operation == OperationRequested.Invalid)
             {
-                Console.WriteLine("Usage:\n\tkdacli (-add {type} | -del \"card name\" | -l | -find {\"card name\"|cardType} | --rebuild-indexes)[-v | --verbose]");
+                Console.WriteLine("Usage:\n\tkdacli (-add {type} | -del \"card name\" | -l | -find {\"card name\"|cardType} | --rebuild-indexes | --dump {file}| --upload {file})[-v | --verbose]");
                 Environment.Exit(-1);
             }
 
@@ -253,6 +285,7 @@ namespace DevelopingInsanity.KDM.kdacli
 
             cardsTable = Task.Run(async () => await Common.CreateTableAsync(account, cardsTableName)).GetAwaiter().GetResult();
             indexTable = Task.Run(async () => await Common.CreateTableAsync(account, indexTableName)).GetAwaiter().GetResult();
+            monsterTable = Task.Run(async () => await Common.CreateTableAsync(account, monsterTableName)).GetAwaiter().GetResult();
 
             switch (parameters.Operation)
             {
@@ -281,7 +314,80 @@ namespace DevelopingInsanity.KDM.kdacli
                         ExecuteRebuildIndexes(cardsTable, indexTable);
                     }
                     break;
+                case OperationRequested.DumpTables:
+                    {
+                        List<CloudTable> tables = new List<CloudTable>();
+                        List<string> names = new List<string>();
+
+                        tables.Add(cardsTable);
+                        names.Add(cardsTableName);
+
+                        tables.Add(indexTable);
+                        names.Add(indexTableName);
+
+                        tables.Add(monsterTable);
+                        names.Add(monsterTableName);
+                        ExecuteDump(tables, names, parameters.DataFile);
+                    }
+                    break;
+                case OperationRequested.RebuildTables:
+                    {
+                        ExecuteUpload(account, parameters.DataFile);
+                    }
+                    break;
             }
+        }
+
+        private static void ExecuteUpload(CloudStorageAccount account, string sourceDataFile)
+        {
+            DumpSerialization dump = null;
+
+            try
+            {
+                Console.Write("Loading source data file...");
+                dump = DumpSerialization.FromFile(sourceDataFile);
+                Console.WriteLine("done");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"failed\nError accessing source data file '{sourceDataFile}':\n{ex}");
+                return;
+            }
+
+            foreach (TableDescriptor table in dump.Tables)
+            {
+                Console.Write($"Inserting entries for table '{table.TableName}'...");
+                CloudTable t = Task.Run(async () => await Common.CreateTableAsync(account, table.TableName)).GetAwaiter().GetResult();
+                foreach (TableEntity e in table.Items)
+                {
+                    TableOperation op = TableOperation.InsertOrReplace(e);
+                    t.ExecuteAsync(op).GetAwaiter().GetResult();
+                }
+                Console.WriteLine($"done - {table.Items.Length} entries uploaded");
+            }
+        }
+
+        private static void ExecuteDump(IList<CloudTable> tables, IList<string> tableNames, string targetDataFile)
+        {
+            DumpSerialization dump = new DumpSerialization();
+
+            dump.Tables = new TableDescriptor[tables.Count];
+
+            for (int i = 0; i < dump.Tables.Length; i++)
+            {
+                Console.WriteLine($"Dump of table '{tableNames[i]}'");
+                dump.Tables[i] = new TableDescriptor();
+                dump.Tables[i].TableName = tableNames[i];
+
+                Console.Write("Retrieving rows...");
+                var entities = tables[i].ExecuteQuery(new TableQuery<TableEntity>()).ToList();
+                dump.Tables[i].Items = entities.ToArray();
+                Console.WriteLine($"done - {dump.Tables[i].Items.Length} entries retrieved");
+            }
+
+            Console.Write("Saving dump to file...");
+            dump.Save(targetDataFile);
+            Console.WriteLine("done\n");
         }
 
         private static void ExecuteRebuildIndexes(CloudTable cardsTable, CloudTable indexTable)
