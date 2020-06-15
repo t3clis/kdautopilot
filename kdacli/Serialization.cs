@@ -7,18 +7,39 @@ using System.Text;
 
 namespace DevelopingInsanity.KDM.kdacli
 {
-    public class TableDescriptor
+    public class CardsTableDescriptor
     {
         public string TableName { get; set; }
-        public TableEntity[] Items { get; set; }
+        public MonsterCardEntity[] Items { get; set; }
 
-        public TableDescriptor()
+        public CardsTableDescriptor()
         { }
+    }
+
+    public class IndexTableDescriptor
+    {
+        public string TableName { get; set; }
+        public IndexByMonsterEntity[] Items { get; set; }
+
+        public IndexTableDescriptor()
+        { }
+    }
+
+    public class MonstersTableDescriptor
+    {
+        public string TableName { get; set; }
+        public MonsterEntry[] Items { get; set; }
+
+        public MonstersTableDescriptor()
+        { 
+        }
     }
 
     public class DumpSerialization
     {
-        public TableDescriptor[] Tables { get; set; }
+        public CardsTableDescriptor Cards { get; set; }
+        public IndexTableDescriptor Index { get; set; }
+        public MonstersTableDescriptor Monsters { get; set; }
 
         public DumpSerialization()
         { }

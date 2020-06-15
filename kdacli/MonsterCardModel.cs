@@ -45,6 +45,22 @@ namespace DevelopingInsanity.KDM
         {
             PartitionKey = monsterName;
             RowKey = monsterLevel;
+            Name = string.Empty;
+            Expansion = string.Empty;
+            Version = string.Empty;
+            Cards = string.Empty;
+            Traits = string.Empty;
+            CardsInPlay = string.Empty;
+            Movement = string.Empty;
+            Toughness = string.Empty;
+            Speed = string.Empty;
+            Damage = string.Empty;
+            Tokens = string.Empty;
+            HuntTableSteps = string.Empty;
+            MonsterPositionInHuntTable = string.Empty;
+            AdditionalModifiers = string.Empty;
+            Instinct = string.Empty;
+            BasicAction = string.Empty;
         }
 
         /// <summary>

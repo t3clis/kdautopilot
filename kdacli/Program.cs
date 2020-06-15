@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace DevelopingInsanity.KDM.kdacli
 {
-    
+
     internal enum OperationRequested
     {
         Unknown,
@@ -178,7 +178,7 @@ namespace DevelopingInsanity.KDM.kdacli
                 }
             }
 
-            if (result.Operation == OperationRequested.Unknown || expectType)
+            if (result.Operation == OperationRequested.Unknown || expectType || expectName || expectFile)
                 result.Operation = OperationRequested.Invalid;
 
             return result;
@@ -243,7 +243,7 @@ namespace DevelopingInsanity.KDM.kdacli
 
         static void Main(string[] args)
         {
-            
+
             AppSettings settings = null;
             CloudStorageAccount account = null;
             CloudTable cardsTable = null, indexTable = null, monsterTable = null;
@@ -319,15 +319,7 @@ namespace DevelopingInsanity.KDM.kdacli
                         List<CloudTable> tables = new List<CloudTable>();
                         List<string> names = new List<string>();
 
-                        tables.Add(cardsTable);
-                        names.Add(cardsTableName);
-
-                        tables.Add(indexTable);
-                        names.Add(indexTableName);
-
-                        tables.Add(monsterTable);
-                        names.Add(monsterTableName);
-                        ExecuteDump(tables, names, parameters.DataFile);
+                        ExecuteDump(cardsTable, indexTable, monsterTable, parameters.DataFile);
                     }
                     break;
                 case OperationRequested.RebuildTables:
@@ -354,36 +346,72 @@ namespace DevelopingInsanity.KDM.kdacli
                 return;
             }
 
-            foreach (TableDescriptor table in dump.Tables)
+            //todo: same considerations as the ExecuteDump() todo annotation
+
+            Console.Write($"Inserting entries for table '{cardsTableName}'...");
+            CloudTable t = Task.Run(async () => await Common.CreateTableAsync(account, dump.Cards.TableName)).GetAwaiter().GetResult();
+            foreach (MonsterCardEntity e in dump.Cards.Items)
             {
-                Console.Write($"Inserting entries for table '{table.TableName}'...");
-                CloudTable t = Task.Run(async () => await Common.CreateTableAsync(account, table.TableName)).GetAwaiter().GetResult();
-                foreach (TableEntity e in table.Items)
-                {
-                    TableOperation op = TableOperation.InsertOrReplace(e);
-                    t.ExecuteAsync(op).GetAwaiter().GetResult();
-                }
-                Console.WriteLine($"done - {table.Items.Length} entries uploaded");
+                TableOperation op = TableOperation.InsertOrReplace(e);
+                t.ExecuteAsync(op).GetAwaiter().GetResult();
             }
+            Console.WriteLine($"done - {dump.Cards.Items.Length} entries uploaded");
+
+            Console.Write($"Inserting entries for table '{indexTableName}'...");
+            t = Task.Run(async () => await Common.CreateTableAsync(account, dump.Index.TableName)).GetAwaiter().GetResult();
+            foreach (IndexByMonsterEntity e in dump.Index.Items)
+            {
+                TableOperation op = TableOperation.InsertOrReplace(e);
+                t.ExecuteAsync(op).GetAwaiter().GetResult();
+            }
+            Console.WriteLine($"done - {dump.Index.Items.Length} entries uploaded");
+
+            Console.Write($"Inserting entries for table '{monsterTableName}'...");
+            t = Task.Run(async () => await Common.CreateTableAsync(account, dump.Monsters.TableName)).GetAwaiter().GetResult();
+            foreach (MonsterEntry e in dump.Monsters.Items)
+            {
+                TableOperation op = TableOperation.InsertOrReplace(e);
+                t.ExecuteAsync(op).GetAwaiter().GetResult();
+            }
+            Console.WriteLine($"done - {dump.Monsters.Items.Length} entries uploaded");
         }
 
-        private static void ExecuteDump(IList<CloudTable> tables, IList<string> tableNames, string targetDataFile)
+        private static void ExecuteDump(CloudTable cards, CloudTable index, CloudTable monsters, string targetDataFile)
         {
             DumpSerialization dump = new DumpSerialization();
 
-            dump.Tables = new TableDescriptor[tables.Count];
+            //todo: we will swap this with a good powershell cmdlet, eventually.
+            //at the moment, we are okay with a static count of items - we just need to populate the initial list
 
-            for (int i = 0; i < dump.Tables.Length; i++)
+            Console.WriteLine($"Dump of table '{cardsTableName}'");
+            dump.Cards = new CardsTableDescriptor
             {
-                Console.WriteLine($"Dump of table '{tableNames[i]}'");
-                dump.Tables[i] = new TableDescriptor();
-                dump.Tables[i].TableName = tableNames[i];
+                TableName = cardsTableName
+            };
+            Console.Write("Retrieving rows...");
+            var cardsEntities = cards.ExecuteQuery(new TableQuery<MonsterCardEntity>()).ToList();
+            dump.Cards.Items = cardsEntities.ToArray();
+            Console.WriteLine($"done - {dump.Cards.Items.Length} entries retrieved");
 
-                Console.Write("Retrieving rows...");
-                var entities = tables[i].ExecuteQuery(new TableQuery<TableEntity>()).ToList();
-                dump.Tables[i].Items = entities.ToArray();
-                Console.WriteLine($"done - {dump.Tables[i].Items.Length} entries retrieved");
-            }
+            Console.WriteLine($"Dump of table '{indexTableName}'");
+            dump.Index = new IndexTableDescriptor
+            {
+                TableName = indexTableName
+            };
+            Console.Write("Retrieving rows...");
+            var indexEntities = index.ExecuteQuery(new TableQuery<IndexByMonsterEntity>()).ToList();
+            dump.Index.Items = indexEntities.ToArray();
+            Console.WriteLine($"done - {dump.Index.Items.Length} entries retrieved");
+
+            Console.WriteLine($"Dump of table '{monsterTableName}'");
+            dump.Monsters = new MonstersTableDescriptor
+            {
+                TableName = monsterTableName
+            };
+            Console.Write("Retrieving rows...");
+            var monsterEntities = monsters.ExecuteQuery(new TableQuery<MonsterEntry>()).ToList();
+            dump.Monsters.Items = monsterEntities.ToArray();
+            Console.WriteLine($"done - {dump.Monsters.Items.Length} entries retrieved");
 
             Console.Write("Saving dump to file...");
             dump.Save(targetDataFile);
