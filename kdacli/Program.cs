@@ -577,15 +577,7 @@ namespace DevelopingInsanity.KDM.kdacli
 
             monsterCard.PartitionKey = parameters.CardType.ToString();
             indexCard.CardType = parameters.CardType.ToString();
-
-            if (parameters.CardType != CardType.BasicAction)
-            {
-                monsterCard.RowKey = ReadNotEmptyLine("Card name: ");
-            }
-            else
-            {
-                monsterCard.RowKey = "Basic Action";
-            }
+            monsterCard.RowKey = ReadNotEmptyLine("Card name: ");
 
             MonsterCardEntity existingCard = cardUtils.RetrieveEntityUsingPointQueryAsync(monsterCard.PartitionKey, monsterCard.RowKey).GetAwaiter().GetResult();
 
@@ -611,7 +603,7 @@ namespace DevelopingInsanity.KDM.kdacli
             monsterCard.Expansion = ReadNotEmptyLine("Expansion: ");
             monsterCard.Versions = ReadNotEmptyLine("Versions: ");
 
-            if (parameters.CardType != CardType.StrangeResource && parameters.CardType != CardType.BasicResource)
+            if (parameters.CardType != CardType.StrangeResource && parameters.CardType != CardType.BasicResource && parameters.CardType != CardType.Universal)
             {
                 indexCard.PartitionKey = ReadNotEmptyLine("Monster: ");
             }
@@ -619,6 +611,7 @@ namespace DevelopingInsanity.KDM.kdacli
             switch (parameters.CardType)
             {
                 case CardType.AI:
+                case CardType.Universal:
                     {
                         monsterCard.AILevel = ReadNotEmptyLine("AI Level: ");
                         Console.Write("AI card types (if any): ");
@@ -631,12 +624,6 @@ namespace DevelopingInsanity.KDM.kdacli
                 case CardType.StrangeResource:
                     {
                         monsterCard.ResourceKeywords = ReadNotEmptyLine("Keywords: ");
-                        monsterCard.CardText = ReadNotEmptyLine("Card Text: ");
-                    }
-                    break;
-                case CardType.BasicAction:
-                case CardType.Instinct:
-                    {
                         monsterCard.CardText = ReadNotEmptyLine("Card Text: ");
                     }
                     break;
@@ -678,7 +665,7 @@ namespace DevelopingInsanity.KDM.kdacli
 
             cardUtils.InsertOrMergeEntityAsync(monsterCard, true).GetAwaiter().GetResult();
 
-            if (parameters.CardType != CardType.BasicResource && parameters.CardType != CardType.StrangeResource)
+            if (parameters.CardType != CardType.BasicResource && parameters.CardType != CardType.StrangeResource && parameters.CardType != CardType.Universal)
             {
                 indexUtils.InsertOrMergeEntityAsync(indexCard, true).GetAwaiter().GetResult();
             }

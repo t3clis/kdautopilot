@@ -13,8 +13,7 @@ namespace DevelopingInsanity.KDM
         MonsterResource,
         StrangeResource,
         HuntEvent,
-        BasicAction,
-        Instinct
+        Universal
     }
 
     public enum MonsterLevel
@@ -190,11 +189,12 @@ namespace DevelopingInsanity.KDM
                 type = CardType.Unknown;
             }
 
-            sb.Append($"{(type == CardType.Instinct ? "Instinct:" : "")}{(type == CardType.BasicAction ? "Basic Action" : RowKey)} {(!string.IsNullOrEmpty(AILevel) ? "(" + AILevel + ")" : "")} [{Expansion} {Versions}]\n");
+            sb.Append($"{RowKey} {(!string.IsNullOrEmpty(AILevel) ? "(" + AILevel + ")" : "")} [{Expansion} {Versions}]\n");
 
 
             switch (type)
             {
+                case CardType.Universal:
                 case CardType.AI:
                     {
                         sb.Append($"{AITypes}\n{CardText}\n");
@@ -215,11 +215,6 @@ namespace DevelopingInsanity.KDM
                 case CardType.StrangeResource:
                     {
                         sb.Append($"{ResourceKeywords}\n{CardText}\n");
-                    }
-                    break;
-                case CardType.BasicAction:
-                    {
-                        sb.Append($"{CardText}\n");
                     }
                     break;
                 case CardType.Unknown:
