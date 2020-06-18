@@ -24,7 +24,7 @@ namespace DevelopingInsanity.KDM.kdaapi
     [ApiController]
     public class MonsterController : ControllerBase
     {
-        private const string CARDS_TABLE = "MonsterCards", INDEX_TABLE = "IndexByMonsterNames";
+        private const string API_URI = "https://kdaapi.azurewebsites.net"; //TODO: put in configuration
 
         [HttpGet]
         public IEnumerable<string> Get()
@@ -118,8 +118,27 @@ namespace DevelopingInsanity.KDM.kdaapi
         public void Post([FromBody] MonsterBuildParameter value)
         {
 
-            MonsterInstanceEntity entity = MonsterInstanceEntity.Generate(DataConnection.TableClient, value.Monster, value.Level, value.Version);
-            HttpContext.Response.Headers.Add("Location", new StringValues(new Uri($"https://kdaapi.azurewebsites.net/sessions/{entity.PartitionKey}").ToString()));
+            MonsterInstanceEntity entity = null;
+            try
+            {
+                entity = MonsterInstanceEntity.Generate(DataConnection.TableClient, value.Monster, value.Level, value.Version);
+            }
+            catch (Exception)
+            {
+            }
+
+            if (entity != null)
+            {
+                HttpContext.Response.StatusCode = 201;
+
+                HttpContext.Response.Headers.Add("Entity", new StringValues(entity.Serialize()));
+
+                HttpContext.Response.Headers.Add("Location", new StringValues(new Uri($"{API_URI}/sessions/{entity.PartitionKey}").ToString()));
+            }
+            else
+            {
+                HttpContext.Response.StatusCode = 400;
+            }
         }
     }
 }

@@ -5,6 +5,7 @@ using Newtonsoft.Json;
 using System.Text;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 
 namespace DevelopingInsanity.KDM.kdaapi.DataModels
 {
@@ -38,6 +39,37 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
         Showdown,
         ShowdownAftermath,
         ShowdownComplete
+    }
+
+    public class CardEntry
+    {
+        public string CardType { get; set; }
+        public string CardName { get; set; }
+        public int FixedPosition { get; set; }
+        public bool FaceUp { get; set; }
+        public string AILevel { get; set; }
+
+        public CardEntry()
+            : this(string.Empty, string.Empty, string.Empty)
+        { }
+
+        public CardEntry(string type, string name)
+            : this(type, name, string.Empty)
+        { }
+
+        public CardEntry(string type, string name, string ai_level)
+        {
+            CardType = type;
+            CardName = name;
+            AILevel = ai_level;
+            FixedPosition = -1;
+            FaceUp = false;
+        }
+
+        public override string ToString()
+        {
+            return $"{(FaceUp ? "~" : "")}{(FixedPosition >= 0 ? "[" + FixedPosition + "]" : "")}{CardName}";
+        }
     }
 
     public class DataUtils
@@ -78,7 +110,7 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
         {
             int highest = -1;
             string[] versions = versionList.Split(",");
-            
+
             foreach (string v in versions)
             {
                 int num = GetVersionNumber(v.Trim());
@@ -103,6 +135,47 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
             }
 
             return false;
+        }
+
+        public static IList<string> Shuffle(IEnumerable<string> deck)
+        {
+            Random r = new Random((int)(DateTime.Now.Ticks & 0xFFFFFFFF));
+            List<string> result = new List<string>();
+            result.AddRange(deck);
+
+            if (result.Count == 0)
+                return result;
+
+            int passes = r.Next(500, 2000);
+
+            for (int i = 0; i < passes; i++)
+            {
+                int pos = r.Next(0, result.Count);
+                string s = result[pos];
+                result.RemoveAt(pos);
+                result.Insert(r.Next(0, result.Count + 1), s);
+            }
+
+            return result;
+        }
+
+        public static string Draw(IList<CardEntry> availableCards, string ai_level, bool pickRandom)
+        {
+            Random r = new Random((int)(DateTime.Now.Ticks & 0xFFFFFFFF));
+            List<CardEntry> entries = availableCards.Where(p => { return p.AILevel.Equals(ai_level); }).ToList();
+            CardEntry e = null;
+
+            if (entries.Count > 0)
+            {
+                if (pickRandom)
+                    e = entries[r.Next(0, entries.Count)];
+                else
+                    e = entries[0];
+            }
+
+            if (e == null)
+                return string.Empty;
+            return e.CardName;
         }
     }
 
@@ -162,7 +235,13 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
             MonsterEntity baseMonster = null;
 
             CloudTable monsterTable = client.GetTableReference(MonsterEntity.TABLE_NAME);
-            var candidates = monsterTable.ExecuteQuery(new TableQuery<MonsterEntity>()).Where(p => { return p.Name.StartsWith(monsterName, StringComparison.InvariantCultureIgnoreCase); }).ToList();
+            CloudTable cardsTable = client.GetTableReference(MonsterCardEntity.TABLE_NAME);
+            CloudTable indexTable = client.GetTableReference(IndexByMonsterEntity.TABLE_NAME);
+
+            var candidates = monsterTable.ExecuteQuery(new TableQuery<MonsterEntity>()).Where(p => 
+            { 
+                return p.Name.StartsWith(monsterName, StringComparison.InvariantCultureIgnoreCase) && p.RowKey.Equals(level); 
+            }).ToList();
 
             if (string.IsNullOrEmpty(version))
             {
@@ -182,19 +261,21 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
                     }
                     catch (FormatException)
                     {
-                        
+
                     }
                 }
             }
             else
             {
-                //pick exact version
                 try
                 {
-                    int ver = DataUtils.GetVersionNumber(version);
                     foreach (MonsterEntity candidate in candidates)
                     {
-                        //TODO: Pick exact version
+                        if (DataUtils.HasVersionNumberInList(version, candidate.Version))
+                        {
+                            baseMonster = candidate;
+                            break;
+                        }
                     }
                 }
                 catch (FormatException)
@@ -204,27 +285,137 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
             if (baseMonster == null)
                 return null;
 
+            result.Version = baseMonster.Version;
+            result.MonsterName = baseMonster.PartitionKey;
+            result.Level = baseMonster.RowKey;
+
+            IList<CardEntry> aiDeck = MonsterCardEntity.GetAvailableAI(cardsTable, indexTable, result.MonsterName, result.Version);
+
+            List<string> exclusions = new List<string>();
+            exclusions.AddRange(baseMonster.CardsInPlay.Split(","));
+            exclusions.AddRange(baseMonster.Traits.Split(","));
+
+            result.AIDeck = PickAIFromDeck(aiDeck, baseMonster.Cards.Split(","), baseMonster.AdditionalModifiers.Split(","), exclusions.ToArray());
+            result.AIDiscard = string.Empty;
+            result.AdditionalAttributes = string.Empty;
+            result.LifePoints = baseMonster.GetLifeValue().ToString();
+            result.HuntingPartyPosition = string.Empty;
+            result.MonsterPosition = baseMonster.MonsterPositionInHuntTable;
+            result.MonsterStates = string.Empty;
+            result.Progression = string.Empty;
+
+            //hunt event deck
+            //monster resource deck
+            //basic resource deck
+            //hl deck
+
             return result;
         }
 
-        public async Task<bool> Save(CloudTable table)
+        private static string PickAIFromDeck(IList<CardEntry> availableCards, string[] monsterTemplate, string[] specialRules, string[] exclusions)
         {
-            TableOperation op = TableOperation.Retrieve<MonsterInstanceEntity>(PartitionKey, RowKey);
+            IList<string> cardList = new List<string>();
+            List<CardEntry> positionalCardsList = new List<CardEntry>();
+            Regex r = new Regex(@"\[([0-9])\](.+)");
+            Regex nm = new Regex(@"\{(B|A|L|S)\}");
 
-            TableResult check = await table.ExecuteAsync(op);
+            foreach (string exclusion in exclusions)
+            {
+                string sanified = exclusion.TrimEnd('`');
+                CardEntry e = availableCards.Where(p => { return p.CardName.StartsWith(sanified); }).FirstOrDefault();
+                if (e != null)
+                    availableCards.Remove(e);
+            }
 
-            if ((check.Result as MonsterInstanceEntity) != null)
-                return false;
+            foreach (string s in monsterTemplate)
+            {
+                bool faceUp = false;
+                string sanified = s.TrimEnd('`');
+                if (sanified.StartsWith("~"))
+                {
+                    sanified = sanified.Substring(1);
+                    faceUp = true;
+                }
+                bool addAt = r.IsMatch(sanified);
 
-            //TODO: proper insertion
+                if (addAt)
+                {
+                    Match m = r.Match(sanified);
+                    sanified = m.Groups[2].Value;
+                    string cardName = sanified;
 
-            return true;
+
+                    if (nm.IsMatch(sanified))
+                    {
+                        cardName = DataUtils.Draw(availableCards, nm.Match(sanified).Groups[1].Value, true);
+                    }
+                    else
+                    {
+                        cardName = sanified;
+                    }
+
+                    availableCards.Remove(availableCards.Where(p => { return p.CardName.StartsWith(cardName); }).FirstOrDefault());
+
+                    CardEntry e = new CardEntry(CardType.AI.ToString(), cardName);
+                    e.FixedPosition = int.Parse(m.Groups[1].Value);
+                    e.FaceUp = faceUp;
+
+                    int pos = 0;
+                    foreach (CardEntry x in positionalCardsList)
+                    {
+                        if (e.FixedPosition > x.FixedPosition)
+                            pos++;
+                        else
+                            break;
+                    }
+
+                    positionalCardsList.Insert(pos, e);
+                }
+                else
+                {
+                    string cardName;
+
+                    if (nm.IsMatch(sanified))
+                    {
+                        cardName = DataUtils.Draw(availableCards, nm.Match(sanified).Groups[1].Value, true);
+                    }
+                    else
+                    {
+                        cardName = sanified;
+                    }
+
+                    availableCards.Remove(availableCards.Where(p => { return p.CardName.StartsWith(cardName); }).FirstOrDefault());
+                    cardList.Add($"{(faceUp ? "~" : "")}{cardName}");
+                }
+            }
+
+            cardList = DataUtils.Shuffle(cardList);
+
+            foreach (CardEntry e in positionalCardsList)
+            {
+                cardList.Insert(e.FixedPosition, $"{(e.FaceUp ? "~" : "")}{e.CardName}");
+            }
+
+            return string.Join(",", cardList);
+        }
+
+        public string Serialize()
+        {
+            return JsonConvert.SerializeObject(this);
+        }
+
+        public static MonsterInstanceEntity Deserialize(string json)
+        {
+            return JsonConvert.DeserializeObject<MonsterInstanceEntity>(json);
         }
     }
 
     public class MonsterEntity : TableEntity
     {
         public const string TABLE_NAME = "Monsters";
+
+        private const string LIFE_TRAIT = "Life";
+        private const string LIFE_NUM_REGEX = @"{life:([0-9]+)}";
 
         public MonsterEntity()
             : this(string.Empty, string.Empty)
@@ -335,10 +526,31 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
         {
             return JsonConvert.DeserializeObject<MonsterEntity>(json);
         }
+
+        public int GetLifeValue()
+        {
+            int life = 0;
+            string[] traits = Traits.Split(",");
+            string[] modifiers = AdditionalModifiers.Split(",");
+
+            if (traits.Where(p => { return p.Equals(LIFE_TRAIT); }).Count() == 0)
+                return life;
+
+            Regex lifeNum = new Regex(LIFE_NUM_REGEX);
+
+            string lifeValue = modifiers.Where(p => { return lifeNum.IsMatch(p); }).FirstOrDefault();
+
+            if (!string.IsNullOrEmpty(lifeValue))
+                life = int.Parse(lifeNum.Match(lifeValue).Groups[1].Value);
+
+            return life;
+        }
     }
 
     public class MonsterCardEntity : TableEntity
     {
+        public const string TABLE_NAME = "MonsterCards";
+
         public MonsterCardEntity()
         : this(string.Empty, string.Empty) { }
 
@@ -433,10 +645,47 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
 
             return sb.ToString();
         }
+
+
+        public static IList<CardEntry> GetAvailableAI(CloudTable cardsTable, CloudTable indexTable, string monsterName, string version)
+        {
+            List<CardEntry> result = new List<CardEntry>();
+            string monsterNameCleaned = monsterName.TrimEnd('`');
+            
+            var aiCards = cardsTable.ExecuteQuery(new TableQuery<MonsterCardEntity>()).Where(p =>
+            {
+                bool result = p.PartitionKey.Equals(CardType.AI.ToString()) || p.PartitionKey.Equals(CardType.Universal.ToString());
+                if (result && !string.IsNullOrEmpty(version))
+                    result = DataUtils.HasVersionNumberInList(version, p.Versions);
+                return result;
+            }).ToList();
+
+            var indexCards = indexTable.ExecuteQuery(new TableQuery<IndexByMonsterEntity>()).ToList();
+
+            foreach (MonsterCardEntity ai in aiCards)
+            {
+                bool isUniversal = ai.PartitionKey.Equals(CardType.Universal.ToString());
+
+                bool isMonsterSpecific = indexCards.Where(p =>
+                {
+                    return p.RowKey.Equals(ai.RowKey) && p.PartitionKey.StartsWith(monsterNameCleaned);
+                }).Count() > 0;
+
+                if (isMonsterSpecific || isUniversal)
+                {
+                    for (int i = 0; i < ai.Multiplicity; i++)
+                        result.Add(new CardEntry(ai.PartitionKey, ai.RowKey, ai.AILevel));
+                }
+            }
+
+            return result;
+        }
     }
 
     public class IndexByMonsterEntity : TableEntity
     {
+        public const string TABLE_NAME = "IndexByMonsterNames";
+
         public IndexByMonsterEntity() : this(string.Empty, string.Empty) { }
 
         public IndexByMonsterEntity(string monster, string cardTitle)

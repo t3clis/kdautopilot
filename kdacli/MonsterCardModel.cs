@@ -1,5 +1,7 @@
 ﻿using Microsoft.Azure.Cosmos.Table;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace DevelopingInsanity.KDM
@@ -134,7 +136,7 @@ namespace DevelopingInsanity.KDM
     public class MonsterCardEntity : TableEntity
     {
         public MonsterCardEntity()
-        :this(string.Empty, string.Empty) { }
+        : this(string.Empty, string.Empty) { }
 
         public MonsterCardEntity(string cardType, string cardTitle)
         {
