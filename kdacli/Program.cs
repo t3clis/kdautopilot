@@ -603,7 +603,11 @@ namespace DevelopingInsanity.KDM.kdacli
             monsterCard.Expansion = ReadNotEmptyLine("Expansion: ");
             monsterCard.Versions = ReadNotEmptyLine("Versions: ");
 
-            if (parameters.CardType != CardType.StrangeResource && parameters.CardType != CardType.BasicResource && parameters.CardType != CardType.Universal)
+            if (parameters.CardType != CardType.StrangeResource 
+                && parameters.CardType != CardType.BasicResource 
+                && parameters.CardType != CardType.Universal
+                && parameters.CardType != CardType.BasicHuntEvent
+                && parameters.CardType != CardType.SpecialHuntEvent)
             {
                 indexCard.PartitionKey = ReadNotEmptyLine("Monster: ");
             }
@@ -644,6 +648,8 @@ namespace DevelopingInsanity.KDM.kdacli
                     }
                     break;
                 case CardType.HuntEvent:
+                case CardType.SpecialHuntEvent:
+                case CardType.BasicHuntEvent:
                     {
                         monsterCard.EventSubtitle = ReadNotEmptyLine("Event subtitle: ");
                         monsterCard.CardText = ReadNotEmptyLine("Card text: ");
@@ -665,7 +671,11 @@ namespace DevelopingInsanity.KDM.kdacli
 
             cardUtils.InsertOrMergeEntityAsync(monsterCard, true).GetAwaiter().GetResult();
 
-            if (parameters.CardType != CardType.BasicResource && parameters.CardType != CardType.StrangeResource && parameters.CardType != CardType.Universal)
+            if (parameters.CardType != CardType.BasicResource 
+                && parameters.CardType != CardType.StrangeResource 
+                && parameters.CardType != CardType.Universal
+                && parameters.CardType != CardType.BasicHuntEvent
+                && parameters.CardType != CardType.SpecialHuntEvent)
             {
                 indexUtils.InsertOrMergeEntityAsync(indexCard, true).GetAwaiter().GetResult();
             }

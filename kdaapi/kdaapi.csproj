@@ -3,6 +3,12 @@
   <PropertyGroup>
     <TargetFramework>netcoreapp3.1</TargetFramework>
     <RootNamespace>DevelopingInsanity.KDM.kdaapi</RootNamespace>
+    <Authors>Alessio Massuoli</Authors>
+    <Company>Alessio Massuoli</Company>
+    <Description>KDM Autopilot REST API</Description>
+    <Copyright>Alessio Massuoli</Copyright>
+    <PackageLicenseExpression>CC-BY-NC-SA-4.0</PackageLicenseExpression>
+    <PackageProjectUrl>http://kdaapi.azurewebsites.net</PackageProjectUrl>
   </PropertyGroup>
 
   <ItemGroup>

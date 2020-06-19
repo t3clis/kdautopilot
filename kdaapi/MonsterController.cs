@@ -14,6 +14,7 @@ namespace DevelopingInsanity.KDM.kdaapi
         public string Monster { get; set; }
         public string Level { get; set; }
         public string Version { get; set; }
+        public string Expansions { get; set; }
 
         public MonsterBuildParameter()
         {
@@ -121,17 +122,20 @@ namespace DevelopingInsanity.KDM.kdaapi
             MonsterInstanceEntity entity = null;
             try
             {
-                entity = MonsterInstanceEntity.Generate(DataConnection.TableClient, value.Monster, value.Level, value.Version);
+                entity = MonsterInstanceEntity.Generate(DataConnection.TableClient, value.Monster, value.Level, value.Version, value.Expansions);
             }
-            catch (Exception)
+            catch (UnauthorizedAccessException uex)
             {
+                HttpContext.Response.StatusCode = 403;
+                HttpContext.Response.Headers.Add("ExceptionMessage", new StringValues(uex.Message));
+                return;
             }
 
             if (entity != null)
             {
                 HttpContext.Response.StatusCode = 201;
 
-                HttpContext.Response.Headers.Add("Entity", new StringValues(entity.Serialize()));
+                HttpContext.Response.Headers.Add("EntityPayload", new StringValues(entity.Serialize()));
 
                 HttpContext.Response.Headers.Add("Location", new StringValues(new Uri($"{API_URI}/sessions/{entity.PartitionKey}").ToString()));
             }

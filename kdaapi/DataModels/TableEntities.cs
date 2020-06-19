@@ -18,6 +18,8 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
         MonsterResource,
         StrangeResource,
         HuntEvent,
+        BasicHuntEvent,
+        SpecialHuntEvent,
         Universal
     }
 
@@ -229,10 +231,11 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
             AdditionalAttributes = string.Empty;
         }
 
-        public static MonsterInstanceEntity Generate(CloudTableClient client, string monsterName, string level, string version)
+        public static MonsterInstanceEntity Generate(CloudTableClient client, string monsterName, string level, string version, string expansionList)
         {
             MonsterInstanceEntity result = new MonsterInstanceEntity();
             MonsterEntity baseMonster = null;
+            string[] expansions = expansionList.Split(",");
 
             CloudTable monsterTable = client.GetTableReference(MonsterEntity.TABLE_NAME);
             CloudTable cardsTable = client.GetTableReference(MonsterCardEntity.TABLE_NAME);
@@ -284,6 +287,9 @@ namespace DevelopingInsanity.KDM.kdaapi.DataModels
 
             if (baseMonster == null)
                 return null;
+
+            if (expansions.Where(p => { return baseMonster.Expansion.Equals(p); }).Count() == 0)
+                throw new UnauthorizedAccessException($"You do not have access to this monster's expansion ({baseMonster.Expansion}). Your available expansions: '{expansionList}'");
 
             result.Version = baseMonster.Version;
             result.MonsterName = baseMonster.PartitionKey;

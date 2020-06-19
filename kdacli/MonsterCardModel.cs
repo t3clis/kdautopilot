@@ -15,6 +15,8 @@ namespace DevelopingInsanity.KDM
         MonsterResource,
         StrangeResource,
         HuntEvent,
+        BasicHuntEvent,
+        SpecialHuntEvent,
         Universal
     }
 
